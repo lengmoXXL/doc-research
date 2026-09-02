@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doc-research"
+version = "0.1.0"
+description = "文献调研工作流工具：PDF/EPUB 转 Markdown，校对翻译为中文报告"
+requires-python = ">=3.10"
+dependencies = [
+  "alibabacloud-docmind-api20220711",
+  "alibabacloud-tea-openapi",
+  "alibabacloud-tea-util",
+  "Pillow",
+  "python-dotenv",
+  "pymupdf",
+  "trafilatura",
+  # trafilatura 依赖的 justext 仍会 import lxml.html.clean（lxml 5.2+ 已拆分为独立包）
+  "lxml_html_clean",
+  # build 子命令（tr/*.md → dist/ HTML）
+  "markdown",
+  "pymdown-extensions",
+  "pygments",
+  "mdx_truly_sane_lists",
+]
+
+[project.scripts]
+doc-research = "doc_research.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doc_research"]
