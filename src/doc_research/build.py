@@ -2,6 +2,7 @@
 """报告构建：把 tr/*.md 渲染为 HTML 站点，写入 dist/（含首页与正文图片）。"""
 
 import html
+import os
 import re
 import shutil
 import sys
@@ -30,9 +31,8 @@ MD_EXTENSION_CONFIGS = {
 }
 
 
-IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\.\./raw/([^)]+)\)")
+IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)")
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
-SOURCE_RE = re.compile(r"^<!--\s*source:\s*(\S+)\s*-->", re.MULTILINE)
 
 # 暗色变量：@media 内（跟随系统且未手动指定浅色）与 [data-theme="dark"]（手动指定暗色）各展开一次
 DARK_VARS = """    --bg: #0d1117;
@@ -185,12 +185,6 @@ a:hover { text-decoration: underline; }
 }
 .entry:hover { background: var(--accent-soft); text-decoration: none; }
 .entry:hover .entry-slug { color: var(--accent); }
-.entry-year {
-  flex: none;
-  width: 4ch;
-  color: var(--muted);
-  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
-}
 .entry-slug {
   flex: 0 1 auto;
   min-width: 0;
@@ -211,12 +205,6 @@ a:hover { text-decoration: underline; }
   text-overflow: ellipsis;
 }
 .entry-title:hover { color: var(--accent); text-decoration: none; }
-.entry-src {
-  flex: none;
-  color: var(--muted);
-  font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.entry-src:hover { color: var(--accent); text-decoration: none; }
 
 .layout {
   max-width: 1080px;
@@ -455,8 +443,8 @@ __CONTENT__
 """
 
 INDEX_BODY = """<section class="hero">
-<h1>调研报告</h1>
-<p>文献调研的中文报告，共 __COUNT__ 篇。</p>
+<h1>__TITLE__</h1>
+<p>共 __COUNT__ 篇。</p>
 </section>
 <section class="entries">
 __ENTRIES__
@@ -474,26 +462,38 @@ def render_page(md_text: str) -> tuple[str, str, str]:
     return content, title, md.toc  # toc 扩展在 convert 时动态挂载该属性
 
 
-def find_source(project: Path, slug: str) -> str:
-    # 网页来源的 raw.md 首行有 <!-- source: <url> --> 注释，用作首页「原文」入口
-    raw_path = project / "raw" / slug / "raw.md"
-    if not raw_path.is_file():
-        return ""
-    match = SOURCE_RE.search(raw_path.read_text(encoding="utf-8"))
-    return match.group(1) if match else ""
+def localize_images(text: str, md_dir: Path, out_dir: Path) -> tuple[str, int]:
+    # 相对路径引用的本地图片复制进输出目录，保持相对结构（去掉开头的 ../）并改写引用
+    count = 0
+
+    def copy(match: re.Match) -> str:
+        nonlocal count
+        alt, src = match.group(1), match.group(2)
+        if re.match(r"[a-z]+:", src, re.I):  # http:、data: 等绝对地址不处理
+            return match.group(0)
+        src_path = (md_dir / src).resolve()
+        rel = os.path.relpath(src_path, md_dir)
+        while rel.startswith("../"):
+            rel = rel[3:]
+        dst = out_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dst)
+        count += 1
+        return f"![{alt}]({rel})"
+
+    return IMAGE_RE.sub(copy, text), count
 
 
 def run(args) -> int:
-    project = Path(args.dir).resolve()
-    tr_dir = project / "tr"
-    dist_dir = project / "dist"
-    if not tr_dir.is_dir():
-        print(f"{tr_dir} 不存在，先完成收集与整理", file=sys.stderr)
+    md_dir = Path(args.md_dir).resolve()
+    out_dir = Path(args.output).resolve()
+    if not md_dir.is_dir():
+        print(f"{md_dir} 不存在", file=sys.stderr)
         return 1
 
-    if dist_dir.exists():
-        shutil.rmtree(dist_dir)
-    dist_dir.mkdir()
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir()
 
     def style_defs(style: str, selector: str) -> str:
         defs = HtmlFormatter(style=style).get_style_defs(selector)
@@ -505,16 +505,9 @@ def run(args) -> int:
     dark_forced = style_defs("github-dark", '[data-theme="dark"] .highlight')
 
     entries = []
-    for md_path in sorted(tr_dir.glob("*.md")):
+    for md_path in sorted(md_dir.glob("*.md")):
         text = md_path.read_text(encoding="utf-8")
-        images = IMAGE_RE.findall(text)
-        text = IMAGE_RE.sub(r"![](raw/\1)", text)
-
-        for rel in images:
-            src = project / "raw" / rel
-            dst = dist_dir / "raw" / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+        text, images = localize_images(text, md_dir, out_dir)
 
         content, title, toc = render_page(text)
         title = title or md_path.stem
@@ -530,45 +523,32 @@ def run(args) -> int:
                 ARTICLE_BODY.replace("__CONTENT__", content).replace("__TOC__", toc),
             )
         )
-        (dist_dir / f"{md_path.stem}.html").write_text(page, encoding="utf-8")
-        entries.append((md_path.stem, title, find_source(project, md_path.stem)))
-        print(f"built {md_path.stem}.html ({len(images)} images)")
+        (out_dir / f"{md_path.stem}.html").write_text(page, encoding="utf-8")
+        entries.append((md_path.stem, title))
+        print(f"built {md_path.stem}.html ({images} images)")
 
-    # 按 slug 尾缀年份倒序（最新在前），同年按 slug 字典序
-    entries = [
-        (int(m.group(1)) if (m := re.search(r"-(\d{4})$", slug)) else 0, slug, title, source)
-        for slug, title, source in entries
-    ]
-    entries.sort(key=lambda e: (-e[0], e[1]))
-
-    def entry_row(year: int, slug: str, title: str, source: str) -> str:
-        source_link = (
-            f'<a class="entry-src" href="{html.escape(source, quote=True)}"'
-            f' target="_blank" rel="noopener">原文 ↗</a>'
-            if source
-            else ""
-        )
+    def entry_row(slug: str, title: str) -> str:
         return (
             f'<div class="entry">'
-            f'<span class="entry-year">{year}</span>'
             f'<a class="entry-slug" href="{quote(slug)}.html">{html.escape(slug)}</a>'
             f'<a class="entry-title" href="{quote(slug)}.html">{html.escape(title)}</a>'
-            f"{source_link}</div>"
+            f"</div>"
         )
-
     rows = "\n".join(entry_row(*entry) for entry in entries)
     index = (
         PAGE_TEMPLATE.replace("__PYGMENTS_LIGHT__", pygments_light)
         .replace("__PYGMENTS_DARK_SYSTEM__", dark_system)
         .replace("__PYGMENTS_DARK_FORCED__", dark_forced)
         .replace("__DARK_VARS__", DARK_VARS)
-        .replace("__TITLE__", "调研报告")
+        .replace("__TITLE__", html.escape(args.title))
         .replace("__NAV_EXTRA__", "")
         .replace(
             "__BODY__",
-            INDEX_BODY.replace("__COUNT__", str(len(entries))).replace("__ENTRIES__", rows),
+            INDEX_BODY.replace("__TITLE__", html.escape(args.title))
+            .replace("__COUNT__", str(len(entries)))
+            .replace("__ENTRIES__", rows),
         )
     )
-    (dist_dir / "index.html").write_text(index, encoding="utf-8")
+    (out_dir / "index.html").write_text(index, encoding="utf-8")
     print(f"built index.html ({len(entries)} articles)")
     return 0

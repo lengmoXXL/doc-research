@@ -24,17 +24,26 @@ TIMEOUT_SECONDS = 1800.0
 
 
 def run(args) -> int:
-    load_dotenv(Path(args.dir) / ".env")
+    load_dotenv(Path.cwd() / ".env")
 
     doc_path = Path(args.file_path).expanduser().resolve()
     if not doc_path.is_file():
         print(f"File not found: {doc_path}", file=sys.stderr)
         return 1
 
-    access_key_id = os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"]
-    access_key_secret = os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"]
+    try:
+        access_key_id = os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"]
+        access_key_secret = os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"]
+    except KeyError as error:
+        key = error.args[0]
+        print(f"缺少凭据 {key}：设为环境变量，或写入当前目录的 .env", file=sys.stderr)
+        return 1
 
-    output_dir = Path(args.dir).resolve() / "raw" / doc_path.stem
+    output_dir = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else Path.cwd() / doc_path.stem
+    )
 
     with tempfile.TemporaryDirectory(prefix="pdf-markdown-") as temp_dir:
         temp_path = Path(temp_dir)

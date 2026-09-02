@@ -59,8 +59,11 @@ def localize_images(markdown: str, page_url: str, images_dir: Path) -> tuple[str
 
 
 def run(args) -> int:
-    slug = args.slug or derive_slug(args.url)
-    output_dir = Path(args.dir).resolve() / "raw" / slug
+    output_dir = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else Path.cwd() / derive_slug(args.url)
+    )
 
     print(f"Fetching {args.url} ...")
     html = fetch(args.url).decode("utf-8", errors="replace")

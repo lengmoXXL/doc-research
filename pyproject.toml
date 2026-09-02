@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "doc-research"
 version = "0.1.0"
-description = "文献调研工作流工具：PDF/EPUB 转 Markdown，校对翻译为中文报告"
+description = "文档处理 CLI：PDF/EPUB 转 Markdown（DocMind）、网页正文提取、PDF 页面导出、Markdown 渲染 HTML 站点"
 requires-python = ">=3.10"
 dependencies = [
   "alibabacloud-docmind-api20220711",
