@@ -35,6 +35,10 @@ def main() -> int:
     build_parser.add_argument("md_dir", help="Markdown 目录")
     build_parser.add_argument("-o", "--output", required=True, help="输出目录")
     build_parser.add_argument("--title", default="文档索引", help="首页标题")
+    build_parser.add_argument("--desc", help="首页标题下的简介（默认只显示篇数）")
+    build_parser.add_argument(
+        "--base", help="首页 <base href>（站点发布在子路径且经根路径访问时使用）"
+    )
 
     args = parser.parse_args()
     # 重依赖（alibabacloud、trafilatura 等）延迟导入，help 等路径保持轻量

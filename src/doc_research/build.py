@@ -48,6 +48,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+__BASE__
 <script>var t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t;</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
@@ -174,6 +175,7 @@ a:hover { text-decoration: underline; }
   margin: 0 auto;
   padding: 4px 24px 48px;
 }
+.index-extra { max-width: 1080px; margin: 0 auto; padding: 0 24px 48px; }
 .entry {
   display: flex;
   align-items: baseline;
@@ -185,6 +187,12 @@ a:hover { text-decoration: underline; }
 }
 .entry:hover { background: var(--accent-soft); text-decoration: none; }
 .entry:hover .entry-slug { color: var(--accent); }
+.entry-year {
+  flex: none;
+  width: 4ch;
+  color: var(--muted);
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .entry-slug {
   flex: 0 1 auto;
   min-width: 0;
@@ -205,6 +213,26 @@ a:hover { text-decoration: underline; }
   text-overflow: ellipsis;
 }
 .entry-title:hover { color: var(--accent); text-decoration: none; }
+.pin {
+  flex: none;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.entry:hover .pin { opacity: 0.8; }
+.pin:hover { color: var(--accent); }
+.pin.on { opacity: 1; color: var(--accent); }
 
 .layout {
   max-width: 1080px;
@@ -389,6 +417,23 @@ __BODY__
   }, { passive: true });
   toTop.addEventListener("click", function () { scrollTo(0, 0); });
 
+  var progressKey = "progress:" + location.pathname;
+  if (!location.hash) {
+    var savedY = Number(localStorage.getItem(progressKey));
+    if (savedY) addEventListener("load", function () {
+      scrollTo({ top: savedY, behavior: "instant" });
+    });
+  }
+  var saveTimer;
+  function saveProgress() {
+    localStorage.setItem(progressKey, String(Math.round(scrollY)));
+  }
+  addEventListener("scroll", function () {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveProgress, 200);
+  }, { passive: true });
+  addEventListener("pagehide", saveProgress);
+
   var toc = document.getElementById("toc");
   var tocToggle = document.getElementById("toc-toggle");
   if (toc && tocToggle) {
@@ -427,6 +472,43 @@ __BODY__
       if (!e.target.closest("#toc")) toc.classList.remove("open");
     });
   }
+  // 置顶（仅首页有条目列表时生效）：图钉切换，置顶的条目排到最前，按页持久化
+  var list = document.querySelector(".entries");
+  if (list) {
+    var pinsKey = "pins:" + location.pathname;
+    var pins = [];
+    try {
+      var savedPins = JSON.parse(localStorage.getItem(pinsKey));
+      if (Array.isArray(savedPins)) pins = savedPins;
+    } catch (e) {}
+    var rowsBySlug = {};
+    var original = [];
+    list.querySelectorAll(".entry").forEach(function (el) {
+      rowsBySlug[el.dataset.slug] = el;
+      original.push(el);
+    });
+    function applyPins() {
+      pins = pins.filter(function (s) { return rowsBySlug[s]; });
+      original.forEach(function (el) {
+        var on = pins.indexOf(el.dataset.slug) >= 0;
+        var btn = el.querySelector(".pin");
+        btn.classList.toggle("on", on);
+        btn.setAttribute("aria-pressed", String(on));
+        list.appendChild(el);
+      });
+      pins.slice().reverse().forEach(function (s) { list.prepend(rowsBySlug[s]); });
+    }
+    list.querySelectorAll(".pin").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var slug = btn.closest(".entry").dataset.slug;
+        var i = pins.indexOf(slug);
+        if (i >= 0) pins.splice(i, 1); else pins.unshift(slug);
+        localStorage.setItem(pinsKey, JSON.stringify(pins));
+        applyPins();
+      });
+    });
+    applyPins();
+  }
 })();
 </script>
 </body>
@@ -442,13 +524,19 @@ __CONTENT__
 <button id="toc-toggle" class="icon-btn" type="button" aria-label="目录"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M8 12h12M12 18h8"/></svg></button>
 """
 
+PIN_SVG = ('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+         ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+         '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 '
+         '15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 '
+         '0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>')
 INDEX_BODY = """<section class="hero">
 <h1>__TITLE__</h1>
-<p>共 __COUNT__ 篇。</p>
+<p>__DESC__</p>
 </section>
 <section class="entries">
 __ENTRIES__
 </section>
+__EXTRA__
 """
 
 
@@ -506,6 +594,8 @@ def run(args) -> int:
 
     entries = []
     for md_path in sorted(md_dir.glob("*.md")):
+        if md_path.name == "index.md":  # index.md 是首页附加内容，不作为文章
+            continue
         text = md_path.read_text(encoding="utf-8")
         text, images = localize_images(text, md_dir, out_dir)
 
@@ -517,6 +607,7 @@ def run(args) -> int:
             .replace("__PYGMENTS_DARK_FORCED__", dark_forced)
             .replace("__DARK_VARS__", DARK_VARS)
             .replace("__TITLE__", html.escape(title))
+            .replace("__BASE__", "")
             .replace("__NAV_EXTRA__", '<a class="back" href="index.html">← 返回首页</a>')
             .replace(
                 "__BODY__",
@@ -527,26 +618,44 @@ def run(args) -> int:
         entries.append((md_path.stem, title))
         print(f"built {md_path.stem}.html ({images} images)")
 
+    def entry_year(slug: str) -> int:
+        m = re.search(r"-(\d{4})$", slug)
+        return int(m.group(1)) if m else 0
+
+    # 按 slug 尾缀年份倒序（最新在前），无年份的排最后，同年按 slug 字典序
+    entries.sort(key=lambda e: (-entry_year(e[0]), e[0]))
+
     def entry_row(slug: str, title: str) -> str:
         return (
-            f'<div class="entry">'
+            f'<div class="entry" data-slug="{html.escape(slug, quote=True)}">'
+            f'<span class="entry-year">{entry_year(slug) or ""}</span>'
             f'<a class="entry-slug" href="{quote(slug)}.html">{html.escape(slug)}</a>'
             f'<a class="entry-title" href="{quote(slug)}.html">{html.escape(title)}</a>'
-            f"</div>"
+            f'<button class="pin" type="button" aria-label="置顶" aria-pressed="false">'
+            f'{PIN_SVG}</button></div>'
         )
     rows = "\n".join(entry_row(*entry) for entry in entries)
+    desc = f"{args.desc}，共 {len(entries)} 篇。" if args.desc else f"共 {len(entries)} 篇。"
+    base_tag = f'<base href="{html.escape(args.base, quote=True)}">' if args.base else ""
+    extra = ""
+    index_md = md_dir / "index.md"
+    if index_md.is_file():
+        extra_content, _, _ = render_page(index_md.read_text(encoding="utf-8"))
+        extra = f'<section class="index-extra">{extra_content}</section>'
     index = (
         PAGE_TEMPLATE.replace("__PYGMENTS_LIGHT__", pygments_light)
         .replace("__PYGMENTS_DARK_SYSTEM__", dark_system)
         .replace("__PYGMENTS_DARK_FORCED__", dark_forced)
         .replace("__DARK_VARS__", DARK_VARS)
         .replace("__TITLE__", html.escape(args.title))
+        .replace("__BASE__", base_tag)
         .replace("__NAV_EXTRA__", "")
         .replace(
             "__BODY__",
             INDEX_BODY.replace("__TITLE__", html.escape(args.title))
-            .replace("__COUNT__", str(len(entries)))
-            .replace("__ENTRIES__", rows),
+            .replace("__DESC__", html.escape(desc))
+            .replace("__ENTRIES__", rows)
+            .replace("__EXTRA__", extra),
         )
     )
     (out_dir / "index.html").write_text(index, encoding="utf-8")
