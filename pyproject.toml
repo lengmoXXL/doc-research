@@ -22,6 +22,8 @@ dependencies = [
   "pymdown-extensions",
   "pygments",
   "mdx_truly_sane_lists",
+  # 49+ 的 macOS wheel 只剩 arm64，Intel Mac 会走源码编译（缺 OpenSSL 失败）；48.0.1 是最后的 universal2
+  "cryptography<49",
 ]
 
 [project.scripts]
