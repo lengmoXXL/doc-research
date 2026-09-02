@@ -39,7 +39,7 @@ dist/                       # doc-research build 产物（HTML 站点），不�
 
 ```bash
 command -v doc-research   # CLI 可用
-doc-research check        # 项目已初始化（.env 凭据 + .venv 依赖）
+doc-research check        # 项目已初始化（.env 凭据）
 ```
 
 任一不满足时**停止操作并向用户报错**，不要代为安装；提示用户先执行：
@@ -174,18 +174,12 @@ O'Reilly 图书（如 DDIA）的"提示/注意/警告"小图标会在正文中�
    先用一个已知地标确定偏移量，例如某公式在书页 13、在 PDF 第 32 页（0 基索引 31），偏移即 +18；
    之后「0 基页索引 = 书页码 + 偏移 - 1」。不知道书页码时，可按译文行号占全文的比例估算大致范围，
    再用第 3 步的拼图快速扫页定位。
-2. 用 pymupdf 导出整页或裁剪局部：
+2. 用 `doc-research export-page` 导出整页或裁剪局部：
 
    ```bash
-   .venv/bin/python - <<'EOF'
-   import fitz
-   doc = fitz.open("/path/to/book.pdf")
-   page = doc[31]  # 0 基页索引
-   page.get_pixmap(dpi=100).save("/tmp/page.png")  # 整页
-   r = page.rect
-   clip = fitz.Rect(r.width*0.25, r.height*0.55, r.width*0.85, r.height*0.80)
-   page.get_pixmap(dpi=200, clip=clip).save("/tmp/crop.png")  # 局部放大
-   EOF
+   doc-research export-page /path/to/book.pdf 31 -o /tmp/page.png  # 整页（0 基页索引）
+   doc-research export-page /path/to/book.pdf 31 -o /tmp/crop.png \
+     --dpi 200 --clip 0.25,0.55,0.85,0.80  # 局部放大（相对坐标）
    ```
 
 3. 连续扫页时用 ImageMagick 拼图（每行 4 页，两行 8 页一屏）：

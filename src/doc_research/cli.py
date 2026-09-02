@@ -20,18 +20,22 @@ def main() -> int:
     fetch_parser.add_argument("url", help="网页 URL")
     fetch_parser.add_argument("--slug", help="raw/ 下的子目录名（默认从 URL 推导）")
 
+    export_parser = subparsers.add_parser(
+        "export-page", help="导出 PDF 页面（或相对坐标裁剪的局部）为图片，供校对核对"
+    )
+    export_parser.add_argument("file_path", help="PDF 路径")
+    export_parser.add_argument("page", type=int, help="页索引（0 基）")
+    export_parser.add_argument("-o", "--output", required=True, help="输出图片路径")
+    export_parser.add_argument("--dpi", type=int, default=100, help="渲染 DPI（默认 100）")
+    export_parser.add_argument("--clip", help="局部裁剪，相对坐标 x0,y0,x1,y1（0~1）")
     subparsers.add_parser("env", help="交互式填写 .env 凭据")
-    subparsers.add_parser("check", help="检查项目是否已初始化（.env 凭据 + .venv 依赖）")
+    subparsers.add_parser("check", help="检查项目是否已初始化（.env 凭据）")
 
     subparsers.add_parser(
         "build", help="报告构建：tr/*.md 渲染为 HTML 站点，写入 dist/"
     )
 
-    init_parser = subparsers.add_parser(
-        "init", help="初始化项目：凭据 + .venv"
-    )
-    init_parser.add_argument("--skip-deps", action="store_true", help="跳过 pip install")
-
+    subparsers.add_parser("init", help="初始化项目：交互式填写 .env 凭据")
     args = parser.parse_args()
     # 重依赖（alibabacloud、trafilatura 等）延迟导入，env/init 保持轻量
     if args.command == "parse":
@@ -40,8 +44,11 @@ def main() -> int:
         return parse.run(args)
     if args.command == "fetch":
         from . import web
-
         return web.run(args)
+    if args.command == "export-page":
+        from . import export
+
+        return export.run(args)
     if args.command == "build":
         from . import build
 
