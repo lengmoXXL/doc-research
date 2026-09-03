@@ -253,7 +253,7 @@ a:hover { text-decoration: underline; }
   font-size: 13px;
   cursor: pointer;
 }
-.tag:hover { color: var(--accent); border-color: var(--accent); }
+.tag:hover { border-color: var(--accent); }
 .tag.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .entry-tag {
   flex: none;
