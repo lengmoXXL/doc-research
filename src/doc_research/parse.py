@@ -177,7 +177,7 @@ def run(args) -> int:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Overwrite generated files only; translations live separately in tr/
+        # 只覆盖脚本产物（raw.md、images/），输出目录下的其它文件不动
         target_raw = output_dir / "raw.md"
         target_images = output_dir / "images"
         if target_raw.exists():

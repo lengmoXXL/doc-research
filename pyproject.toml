@@ -17,11 +17,12 @@ dependencies = [
   "trafilatura",
   # trafilatura 依赖的 justext 仍会 import lxml.html.clean（lxml 5.2+ 已拆分为独立包）
   "lxml_html_clean",
-  # build 子命令（tr/*.md → dist/ HTML）
+  # build 子命令（Markdown → HTML 站点）
   "markdown",
   "pymdown-extensions",
   "pygments",
   "mdx_truly_sane_lists",
+  "pyyaml",
   # 49+ 的 macOS wheel 只剩 arm64，Intel Mac 会走源码编译（缺 OpenSSL 失败）；48.0.1 是最后的 universal2
   "cryptography<49",
 ]

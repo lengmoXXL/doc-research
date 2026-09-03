@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""报告构建：把 tr/*.md 渲染为 HTML 站点，写入 dist/（含首页与正文图片）。"""
+"""把目录中的 Markdown 渲染为 HTML 站点（含首页、目录栏与正文图片）。"""
 
 import html
+import json
 import os
 import re
 import shutil
@@ -10,6 +11,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import markdown
+import yaml
 from markdown.extensions.toc import slugify_unicode
 from pygments.formatters import HtmlFormatter
 
@@ -33,6 +35,7 @@ MD_EXTENSION_CONFIGS = {
 
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)")
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---(?:\n|$)", re.S)
 
 # 暗色变量：@media 内（跟随系统且未手动指定浅色）与 [data-theme="dark"]（手动指定暗色）各展开一次
 DARK_VARS = """    --bg: #0d1117;
@@ -233,6 +236,34 @@ a:hover { text-decoration: underline; }
 .entry:hover .pin { opacity: 0.8; }
 .pin:hover { color: var(--accent); }
 .pin.on { opacity: 1; color: var(--accent); }
+.tag-filter {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tag {
+  padding: 2px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.tag:hover { color: var(--accent); border-color: var(--accent); }
+.tag.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.entry-tag {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+.entry.hide { display: none; }
 
 .layout {
   max-width: 1080px;
@@ -509,6 +540,25 @@ __BODY__
     });
     applyPins();
   }
+
+  // 标签过滤：chips 多选，条目须含全部选中标签；再次点击取消选中
+  var filter = document.querySelector(".tag-filter");
+  if (filter && list) {
+    var selected = [];
+    filter.querySelectorAll(".tag").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var tag = chip.dataset.tag;
+        var i = selected.indexOf(tag);
+        if (i >= 0) selected.splice(i, 1); else selected.push(tag);
+        chip.classList.toggle("on", i < 0);
+        list.querySelectorAll(".entry").forEach(function (el) {
+          var tags = JSON.parse(el.dataset.tags);
+          var show = selected.every(function (t) { return tags.indexOf(t) >= 0; });
+          el.classList.toggle("hide", !show);
+        });
+      });
+    });
+  }
 })();
 </script>
 </body>
@@ -533,6 +583,7 @@ INDEX_BODY = """<section class="hero">
 <h1>__TITLE__</h1>
 <p>__DESC__</p>
 </section>
+__TAG_FILTER__
 <section class="entries">
 __ENTRIES__
 </section>
@@ -548,6 +599,18 @@ def render_page(md_text: str) -> tuple[str, str, str]:
     title_match = TITLE_RE.search(md_text)
     title = title_match.group(1) if title_match else ""
     return content, title, md.toc  # toc 扩展在 convert 时动态挂载该属性
+
+
+def split_frontmatter(text: str) -> tuple[str, list[str]]:
+    # Obsidian 风格 YAML 头；只取 tags（列表或单个标量），整块剥离不参与渲染
+    match = FRONTMATTER_RE.match(text)
+    if not match:
+        return text, []
+    meta = yaml.safe_load(match.group(1)) or {}
+    tags = meta.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    return text[match.end():], tags
 
 
 def localize_images(text: str, md_dir: Path, out_dir: Path) -> tuple[str, int]:
@@ -597,6 +660,7 @@ def run(args) -> int:
         if md_path.name == "index.md":  # index.md 是首页附加内容，不作为文章
             continue
         text = md_path.read_text(encoding="utf-8")
+        text, tags = split_frontmatter(text)
         text, images = localize_images(text, md_dir, out_dir)
 
         content, title, toc = render_page(text)
@@ -615,7 +679,7 @@ def run(args) -> int:
             )
         )
         (out_dir / f"{md_path.stem}.html").write_text(page, encoding="utf-8")
-        entries.append((md_path.stem, title))
+        entries.append((md_path.stem, title, tags))
         print(f"built {md_path.stem}.html ({images} images)")
 
     def entry_year(slug: str) -> int:
@@ -625,22 +689,38 @@ def run(args) -> int:
     # 按 slug 尾缀年份倒序（最新在前），无年份的排最后，同年按 slug 字典序
     entries.sort(key=lambda e: (-entry_year(e[0]), e[0]))
 
-    def entry_row(slug: str, title: str) -> str:
+    def entry_row(slug: str, title: str, tags: list[str]) -> str:
+        tag_spans = "".join(
+            f'<span class="entry-tag">{html.escape(t)}</span>' for t in tags
+        )
+        data_tags = html.escape(json.dumps(tags, ensure_ascii=False), quote=True)
         return (
-            f'<div class="entry" data-slug="{html.escape(slug, quote=True)}">'
+            f'<div class="entry" data-slug="{html.escape(slug, quote=True)}"'
+            f' data-tags="{data_tags}">'
             f'<span class="entry-year">{entry_year(slug) or ""}</span>'
             f'<a class="entry-slug" href="{quote(slug)}.html">{html.escape(slug)}</a>'
             f'<a class="entry-title" href="{quote(slug)}.html">{html.escape(title)}</a>'
+            f"{tag_spans}"
             f'<button class="pin" type="button" aria-label="置顶" aria-pressed="false">'
             f'{PIN_SVG}</button></div>'
         )
+    all_tags = sorted({t for _, _, tags in entries for t in tags})
+    tag_filter = ""
+    if all_tags:
+        chips = "".join(
+            f'<button class="tag" type="button" data-tag="{html.escape(t, quote=True)}">'
+            f"{html.escape(t)}</button>"
+            for t in all_tags
+        )
+        tag_filter = f'<div class="tag-filter">{chips}</div>'
     rows = "\n".join(entry_row(*entry) for entry in entries)
     desc = f"{args.desc}，共 {len(entries)} 篇。" if args.desc else f"共 {len(entries)} 篇。"
     base_tag = f'<base href="{html.escape(args.base, quote=True)}">' if args.base else ""
     extra = ""
     index_md = md_dir / "index.md"
     if index_md.is_file():
-        extra_content, _, _ = render_page(index_md.read_text(encoding="utf-8"))
+        extra_text, _ = split_frontmatter(index_md.read_text(encoding="utf-8"))
+        extra_content, _, _ = render_page(extra_text)
         extra = f'<section class="index-extra">{extra_content}</section>'
     index = (
         PAGE_TEMPLATE.replace("__PYGMENTS_LIGHT__", pygments_light)
@@ -654,6 +734,7 @@ def run(args) -> int:
             "__BODY__",
             INDEX_BODY.replace("__TITLE__", html.escape(args.title))
             .replace("__DESC__", html.escape(desc))
+            .replace("__TAG_FILTER__", tag_filter)
             .replace("__ENTRIES__", rows)
             .replace("__EXTRA__", extra),
         )
