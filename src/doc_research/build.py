@@ -36,6 +36,8 @@ MD_EXTENSION_CONFIGS = {
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)")
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---(?:\n|$)", re.S)
+LINK_RE = re.compile(r"\]\(([^)\s/]+?\.md)(#[^)\s]*)?\)")
+ENTRY_LINK_RE = re.compile(r"^[-*] \[[^]]*\]\(([^)\s/]+?)\.md(?:#[^)\s]*)?\)\s*$", re.M)
 
 # 暗色变量：@media 内（跟随系统且未手动指定浅色）与 [data-theme="dark"]（手动指定暗色）各展开一次
 DARK_VARS = """    --bg: #0d1117;
@@ -178,7 +180,6 @@ a:hover { text-decoration: underline; }
   margin: 0 auto;
   padding: 4px 24px 48px;
 }
-.index-extra { max-width: 1080px; margin: 0 auto; padding: 0 24px 48px; }
 .entry {
   display: flex;
   align-items: baseline;
@@ -582,11 +583,9 @@ INDEX_BODY = """<section class="hero">
 <h1>__TITLE__</h1>
 <p>__DESC__</p>
 </section>
-__TAG_FILTER__
 <section class="entries">
-__ENTRIES__
+__CONTENT__
 </section>
-__EXTRA__
 """
 
 
@@ -634,6 +633,54 @@ def localize_images(text: str, md_dir: Path, out_dir: Path) -> tuple[str, int]:
     return IMAGE_RE.sub(copy, text), count
 
 
+def localize_links(text: str, slugs: set[str], source: str) -> str:
+    # 站内互链 [文字](other.md) 改写为 .html；仅处理同目录裸文件名，目标缺失时警告
+    def rewrite(match: re.Match) -> str:
+        slug, anchor = match.group(1)[:-3], match.group(2) or ""
+        if slug not in slugs:
+            print(f"{source}: 内链目标不存在: {slug}.md", file=sys.stderr)
+        return f"]({slug}.html{anchor})"
+
+    return LINK_RE.sub(rewrite, text)
+
+
+def entry_year(slug: str) -> int:
+    m = re.search(r"-(\d{4})$", slug)
+    return int(m.group(1)) if m else 0
+
+
+def entry_row(slug: str, title: str, tags: list[str]) -> str:
+    tag_spans = "".join(f'<span class="entry-tag">{html.escape(t)}</span>' for t in tags)
+    data_tags = html.escape(json.dumps(tags, ensure_ascii=False), quote=True)
+    return (
+        f'<div class="entry" data-slug="{html.escape(slug, quote=True)}"'
+        f' data-tags="{data_tags}">'
+        f'<span class="entry-year">{entry_year(slug) or ""}</span>'
+        f'<a class="entry-slug" href="{quote(slug)}.html">{html.escape(slug)}</a>'
+        f'<a class="entry-title" href="{quote(slug)}.html">{html.escape(title)}</a>'
+        f"{tag_spans}"
+        f'<button class="pin" type="button" aria-label="置顶" aria-pressed="false">'
+        f"{PIN_SVG}</button></div>"
+    )
+
+
+def enhance_entries(
+    text: str, articles: dict[str, tuple[str, list[str]]], source: str
+) -> tuple[str, list[str]]:
+    # index.md 中「整个列表项为单个 .md 内链」的行是首页条目，替换为条目行 HTML
+    entry_slugs = []
+
+    def enhance(match: re.Match) -> str:
+        slug = match.group(1)
+        if slug not in articles:
+            return match.group(0)  # 保留原样，localize_links 会统一警告
+        title, tags = articles[slug]
+        entry_slugs.append(slug)
+        return entry_row(slug, title, tags)
+
+    return ENTRY_LINK_RE.sub(enhance, text), entry_slugs
+
+
 def run(args) -> int:
     md_dir = Path(args.md_dir).resolve()
     out_dir = Path(args.output).resolve()
@@ -654,13 +701,14 @@ def run(args) -> int:
     dark_system = style_defs("github-dark", ':root:not([data-theme="light"]) .highlight')
     dark_forced = style_defs("github-dark", '[data-theme="dark"] .highlight')
 
-    entries = []
-    for md_path in sorted(md_dir.glob("*.md")):
-        if md_path.name == "index.md":  # index.md 是首页附加内容，不作为文章
-            continue
+    md_paths = [p for p in sorted(md_dir.glob("*.md")) if p.name != "index.md"]
+    slugs = {p.stem for p in md_paths}
+    articles = {}
+    for md_path in md_paths:
         text = md_path.read_text(encoding="utf-8")
         text, tags = split_frontmatter(text)
         text, images = localize_images(text, md_dir, out_dir)
+        text = localize_links(text, slugs, md_path.name)
 
         content, title, toc = render_page(text)
         title = title or md_path.stem
@@ -678,49 +726,33 @@ def run(args) -> int:
             )
         )
         (out_dir / f"{md_path.stem}.html").write_text(page, encoding="utf-8")
-        entries.append((md_path.stem, title, tags))
+        articles[md_path.stem] = (title, tags)
         print(f"built {md_path.stem}.html ({images} images)")
 
-    def entry_year(slug: str) -> int:
-        m = re.search(r"-(\d{4})$", slug)
-        return int(m.group(1)) if m else 0
-
-    # 按 slug 尾缀年份倒序（最新在前），无年份的排最后，同年按 slug 字典序
-    entries.sort(key=lambda e: (-entry_year(e[0]), e[0]))
-
-    def entry_row(slug: str, title: str, tags: list[str]) -> str:
-        tag_spans = "".join(
-            f'<span class="entry-tag">{html.escape(t)}</span>' for t in tags
-        )
-        data_tags = html.escape(json.dumps(tags, ensure_ascii=False), quote=True)
-        return (
-            f'<div class="entry" data-slug="{html.escape(slug, quote=True)}"'
-            f' data-tags="{data_tags}">'
-            f'<span class="entry-year">{entry_year(slug) or ""}</span>'
-            f'<a class="entry-slug" href="{quote(slug)}.html">{html.escape(slug)}</a>'
-            f'<a class="entry-title" href="{quote(slug)}.html">{html.escape(title)}</a>'
-            f"{tag_spans}"
-            f'<button class="pin" type="button" aria-label="置顶" aria-pressed="false">'
-            f'{PIN_SVG}</button></div>'
-        )
-    all_tags = sorted({t for _, _, tags in entries for t in tags})
-    tag_filter = ""
-    if all_tags:
-        chips = "".join(
-            f'<button class="tag" type="button" data-tag="{html.escape(t, quote=True)}">'
-            f"{html.escape(t)}</button>"
-            for t in all_tags
-        )
-        tag_filter = f'<div class="tag-filter">{chips}</div>'
-    rows = "\n".join(entry_row(*entry) for entry in entries)
-    desc = f"{args.desc}，共 {len(entries)} 篇。" if args.desc else f"共 {len(entries)} 篇。"
-    base_tag = f'<base href="{html.escape(args.base, quote=True)}">' if args.base else ""
-    extra = ""
+    # 首页：index.md 走与文章相同的管线；其中「整项为单个 .md 内链」的列表行增强为条目行
+    content_html = ""
+    entry_slugs = []
     index_md = md_dir / "index.md"
     if index_md.is_file():
-        extra_text, _ = split_frontmatter(index_md.read_text(encoding="utf-8"))
-        extra_content, _, _ = render_page(extra_text)
-        extra = f'<section class="index-extra">{extra_content}</section>'
+        text, _ = split_frontmatter(index_md.read_text(encoding="utf-8"))
+        text, _ = localize_images(text, md_dir, out_dir)
+        text, entry_slugs = enhance_entries(text, articles, "index.md")
+        text = localize_links(text, slugs, "index.md")
+        if entry_slugs:
+            all_tags = sorted({t for slug in entry_slugs for t in articles[slug][1]})
+            if all_tags:
+                chips = "".join(
+                    f'<button class="tag" type="button" data-tag="{html.escape(t, quote=True)}">'
+                    f"{html.escape(t)}</button>"
+                    for t in all_tags
+                )
+                pos = text.find('<div class="entry"')
+                text = text[:pos] + f'<div class="tag-filter">{chips}</div>\n' + text[pos:]
+        content_html, _, _ = render_page(text)
+
+    count = len(entry_slugs) if entry_slugs else len(articles)
+    desc = f"{args.desc}，共 {count} 篇。" if args.desc else f"共 {count} 篇。"
+    base_tag = f'<base href="{html.escape(args.base, quote=True)}">' if args.base else ""
     index = (
         PAGE_TEMPLATE.replace("__PYGMENTS_LIGHT__", pygments_light)
         .replace("__PYGMENTS_DARK_SYSTEM__", dark_system)
@@ -733,11 +765,9 @@ def run(args) -> int:
             "__BODY__",
             INDEX_BODY.replace("__TITLE__", html.escape(args.title))
             .replace("__DESC__", html.escape(desc))
-            .replace("__TAG_FILTER__", tag_filter)
-            .replace("__ENTRIES__", rows)
-            .replace("__EXTRA__", extra),
+            .replace("__CONTENT__", content_html),
         )
     )
     (out_dir / "index.html").write_text(index, encoding="utf-8")
-    print(f"built index.html ({len(entries)} articles)")
+    print(f"built index.html ({len(articles)} articles)")
     return 0
