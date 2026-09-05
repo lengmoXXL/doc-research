@@ -33,3 +33,9 @@ doc-research = "doc_research.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doc_research"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

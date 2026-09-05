@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """用阿里云 DocMind 将本地文档（PDF、EPUB 等）转换为 Markdown，并裁剪出图片。"""
 
 import json
@@ -10,13 +9,12 @@ import time
 from pathlib import Path
 from urllib.request import urlopen
 
-from PIL import Image
 from alibabacloud_docmind_api20220711 import models as docmind_models
 from alibabacloud_docmind_api20220711.client import Client as DocMindClient
 from alibabacloud_tea_openapi import models as open_api_models
 from darabonba.runtime import RuntimeOptions
 from dotenv import load_dotenv
-
+from PIL import Image
 
 DOCMIND_ENDPOINT = "docmind-api.cn-hangzhou.aliyuncs.com"
 POLL_INTERVAL_SECONDS = 5.0
@@ -28,7 +26,7 @@ def run(args) -> int:
 
     doc_path = Path(args.file_path).expanduser().resolve()
     if not doc_path.is_file():
-        print(f"File not found: {doc_path}", file=sys.stderr)
+        print(f"文件不存在：{doc_path}", file=sys.stderr)
         return 1
 
     try:
@@ -40,9 +38,7 @@ def run(args) -> int:
         return 1
 
     output_dir = (
-        Path(args.output).expanduser().resolve()
-        if args.output
-        else Path.cwd() / doc_path.stem
+        Path(args.output).expanduser().resolve() if args.output else Path.cwd() / doc_path.stem
     )
 
     with tempfile.TemporaryDirectory(prefix="pdf-markdown-") as temp_dir:
@@ -60,7 +56,7 @@ def run(args) -> int:
         config.endpoint = DOCMIND_ENDPOINT
         client = DocMindClient(config)
 
-        print(f"Submitting DocMind job for {doc_path} ...")
+        print(f"提交 DocMind 任务：{doc_path} ...")
         with doc_path.open("rb") as doc_file:
             request = docmind_models.SubmitDocParserJobAdvanceRequest(
                 file_name=doc_path.name,
@@ -74,9 +70,9 @@ def run(args) -> int:
             response = client.submit_doc_parser_job_advance(request, RuntimeOptions())
         job_id = response.body.data.id
         if not job_id:
-            print("DocMind did not return a job ID", file=sys.stderr)
+            print("DocMind 未返回任务 ID", file=sys.stderr)
             return 1
-        print(f"Job ID: {job_id}")
+        print(f"任务 ID：{job_id}")
 
         started_at = time.monotonic()
         while True:
@@ -86,7 +82,7 @@ def run(args) -> int:
             status_data = response.body.data.to_map()
             status = status_data["Status"]
             progress = status_data["Processing"]
-            print(f"Status: {status}" + (f" ({progress}%)" if progress is not None else ""))
+            print(f"状态：{status}" + (f"（{progress}%）" if progress is not None else ""))
 
             if status == "success":
                 break
@@ -94,7 +90,7 @@ def run(args) -> int:
                 print(json.dumps(status_data, ensure_ascii=False, indent=2), file=sys.stderr)
                 return 1
             if time.monotonic() - started_at >= TIMEOUT_SECONDS:
-                print(f"Timed out after {TIMEOUT_SECONDS:.0f} seconds", file=sys.stderr)
+                print(f"超时（{TIMEOUT_SECONDS:.0f} 秒）", file=sys.stderr)
                 return 1
             time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -120,18 +116,14 @@ def run(args) -> int:
             if len(batch) < layout_step_size:
                 break
 
-        figure_pages = {
-            layout["pageNum"] for layout in layouts if layout["type"] == "figure"
-        }
+        figure_pages = {layout["pageNum"] for layout in layouts if layout["type"] == "figure"}
         pages_by_number = {}
         for page in page_records:
             page_number = page["PageIdCurDoc"]
             if page_number not in figure_pages:
                 continue
             page_path = pages_dir / f"page-{page_number:04d}"
-            with urlopen(page["ImageUrl"], timeout=120) as source, page_path.open(
-                "wb"
-            ) as target:
+            with urlopen(page["ImageUrl"], timeout=120) as source, page_path.open("wb") as target:
                 shutil.copyfileobj(source, target)
             pages_by_number[page_number] = {
                 "path": page_path,
@@ -144,9 +136,9 @@ def run(args) -> int:
         for layout in layouts:
             layout_type = layout["type"]
             if layout_type != "figure":
-                markdown = layout["markdownContent"]
-                if markdown:
-                    local_markdown.append(markdown)
+                text = layout["markdownContent"]
+                if text:
+                    local_markdown.append(text)
                 continue
             page_number = layout["pageNum"]
             points = layout["pos"]
@@ -170,9 +162,9 @@ def run(args) -> int:
                 local_image = image_path.relative_to(result_dir).as_posix()
                 local_markdown.append(f"![{layout_type}]({local_image})")
 
-        rendered_markdown = "\n\n".join(
-            block.rstrip("\n") for block in local_markdown
-        ).strip() + "\n"
+        rendered_markdown = (
+            "\n\n".join(block.rstrip("\n") for block in local_markdown).strip() + "\n"
+        )
         (result_dir / "raw.md").write_text(rendered_markdown, encoding="utf-8")
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -188,7 +180,7 @@ def run(args) -> int:
         shutil.move(str(result_dir / "raw.md"), str(target_raw))
         shutil.move(str(result_dir / "images"), str(target_images))
 
-    print(f"Saved local results to {output_dir}")
-    print(f"- Markdown: {output_dir / 'raw.md'}")
-    print(f"- Cropped figures: {output_dir / 'images'} ({figure_number})")
+    print(f"已保存到 {output_dir}")
+    print(f"- Markdown：{output_dir / 'raw.md'}")
+    print(f"- 裁剪图片：{output_dir / 'images'}（{figure_number} 张）")
     return 0

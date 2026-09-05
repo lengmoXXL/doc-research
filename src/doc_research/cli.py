@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""doc-research：文档处理 CLI——PDF/EPUB 转 Markdown、网页正文提取、PDF 页面导出、Markdown 渲染 HTML 站点。"""
+"""文档处理 CLI：PDF/EPUB 转 Markdown、网页正文提取、PDF 页面导出、Markdown 渲染 HTML 站点。"""
 
 import argparse
 
@@ -29,13 +28,11 @@ def main() -> int:
     export_parser.add_argument("--dpi", type=int, default=100, help="渲染 DPI（默认 100）")
     export_parser.add_argument("--clip", help="局部裁剪，相对坐标 x0,y0,x1,y1（0~1）")
 
-    build_parser = subparsers.add_parser(
-        "build", help="把目录中的 Markdown 渲染为 HTML 站点"
-    )
+    build_parser = subparsers.add_parser("build", help="把目录中的 Markdown 渲染为 HTML 站点")
     build_parser.add_argument("md_dir", help="Markdown 目录")
     build_parser.add_argument("-o", "--output", required=True, help="输出目录")
     build_parser.add_argument("--title", default="文档索引", help="首页标题")
-    build_parser.add_argument("--desc", help="首页标题下的简介（默认只显示篇数）")
+    build_parser.add_argument("--desc", help="首页标题下的简介（默认只显示条目数）")
     build_parser.add_argument(
         "--base", help="首页 <base href>（站点发布在子路径且经根路径访问时使用）"
     )
