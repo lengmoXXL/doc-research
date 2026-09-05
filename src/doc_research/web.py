@@ -5,21 +5,19 @@ import re
 import sys
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
-from urllib.request import Request, urlopen
 
 import trafilatura
+from curl_cffi import requests
 
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-)
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)")
 ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
 
 
 def fetch(url: str) -> bytes:
-    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=60) as resp:
-        return resp.read()
+    # impersonate 模拟真实浏览器的 TLS 指纹，绕过常见的机器人检测
+    resp = requests.get(url, impersonate="chrome", timeout=60)
+    resp.raise_for_status()
+    return resp.content
 
 
 def derive_slug(url: str) -> str:
